@@ -1,6 +1,9 @@
 package database
 
-import "errors"
+import (
+	"errors"
+	"sync"
+)
 
 // Let's define a Database interface. An interface basically is something
 // you can define a function to accept (see `writeToDatabase` in `main.go`)
@@ -40,6 +43,19 @@ type Database interface {
 // It's pretty common to use interfaces to make sure that our code is
 // decoupled: https://softwareengineering.stackexchange.com/questions/244476/what-is-decoupling-and-what-development-areas-can-it-apply-to
 type MapDatabase struct {
+	// This is a mutex to lock the hashtable so we can't access it
+	// concurrently. With a mutex, if it's currently locked, then a
+	// call to lock will spin until it's unlocked. This guarantees no
+	// two threads can take a lock (and execute the code within the
+	// critical section where the lock is taken) at the same time.
+	//
+	// This leaves an optimisation opportunity, since a map CANNOT be
+	// read while written or written while written, but as long as it's
+	// NOT being written, it can accept concurrent reads. Given the use
+	// pattern will probably be lots of concurrent reads and fewer writes,
+	// you could look at using a sync.RWMutex.
+	hashtableMutex sync.Mutex
+
 	// This is the hashtable (you know, like a Python dictionary - in Go
 	// they're called maps)
 	//
@@ -47,7 +63,7 @@ type MapDatabase struct {
 	// The way you export a field is to give it a name that starts with a
 	// capital letter. This is extremely stupid but it's how the language is
 	// written.
-	hashtable map[string]string
+	hashtable      map[string]string
 }
 
 // This is a method on a struct receiver. You can call it with an instance of
@@ -85,7 +101,15 @@ func (db MapDatabase) Get(key string) (string, error) {
 // `Database` interface above, since it requires that the Set() method
 // must return an error variable. Ours is just always gonna be nil in this case.
 func (db *MapDatabase) Set(key, value string) error {
+	db.hashtableMutex.Lock()
+
+	// This executes db.hashtableMutex.Unlock() whenever the function exits,
+	// and is common for more complicated functions because it's hard to
+	// identify all the possible paths where it might exit.
+	defer db.hashtableMutex.Unlock()
+
 	db.hashtable[key] = value
+
 	return nil
 }
 
